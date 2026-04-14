@@ -1,4 +1,4 @@
-import { Validator, ValidationError, type Schema } from 'jsonschema';
+import { Validator } from '@cfworker/json-schema';
 import {
   createErrorHandler,
   getDefaultFormState,
@@ -19,56 +19,41 @@ import type {
   ValidatorType,
 } from '@rjsf/utils';
 
-/**
- * Converts a `jsonschema` ValidationError into the RJSFValidationError shape
- * expected by the rjsf form machinery and user-supplied `transformErrors`
- * callbacks.
- */
-function toRJSFValidationErrors(errors: ValidationError[]): RJSFValidationError[] {
+function toRJSFValidationErrors(errors: any[]): RJSFValidationError[] {
   return errors.map((e) => {
-    // jsonschema `property` is like "instance", "instance.fieldName", "instance[0].x"
-    // Strip the leading "instance" to get the rjsf-style dotted path.
-    let property = e.property.replace(/^instance/, '');
+    let property = e.instanceLocation.replace(/^#\/?/, '').replace(/\//g, '.');
 
-    // For `required` errors the failing property is the *parent* object and
-    // e.argument is the name of the missing field — mirror what the AJV
-    // validator does by appending it.
-    if (e.name === 'required' && typeof e.argument === 'string') {
-      property = property ? `${property}.${e.argument}` : `.${e.argument}`;
+    if (property.startsWith('.')) {
+      property = property.substring(1);
     }
 
-    // Ensure a leading dot so callers can do `error.property === '.fieldName'`
+    let message = e.error;
+    let name = e.keyword || 'custom';
+    let params: any = {};
+
+    if (message.includes('required')) {
+      name = 'required';
+      message = 'is a required property';
+      const missingProp = e.error.split('"')[1];
+      if (missingProp) {
+        property = property ? `${property}.${missingProp}` : `.${missingProp}`;
+        params = { missingProperty: missingProp };
+      }
+    }
+
     if (property && !property.startsWith('.') && !property.startsWith('[')) {
       property = `.${property}`;
     }
 
-    let { message } = e;
-
-    if (e.name === 'required') {
-      message = 'is a required property';
-    }
-
     const stack = property ? `${property} ${message}`.trim() : message;
 
-    // Keep a minimal `params` bag so that any `transformErrors` callbacks that
-    // inspect keyword-specific params (e.g. pattern, required) still work.
-    const params: Record<string, unknown> =
-      e.argument !== undefined
-        ? { [e.name === 'required' ? 'missingProperty' : e.name]: e.argument }
-        : {};
-
-    const schemaPath =
-      typeof e.schema === 'object'
-        ? ((e.schema as Schema).id ?? (e.schema as Schema).$id ?? '')
-        : '';
-
     return {
-      name: e.name,
+      name,
       property: property || '.',
       message,
       params,
       stack,
-      schemaPath: schemaPath as string,
+      schemaPath: e.schemaLocation || '',
     };
   });
 }
@@ -81,27 +66,25 @@ class EvalFreeValidator<
 {
   isValid(schema: S, formData: T | undefined, rootSchema: S): boolean {
     try {
-      const v = new Validator();
-      const rootId =
-        ((rootSchema as Record<string, unknown>)?.$id as string | undefined) ??
-        ((rootSchema as Record<string, unknown>)?.id as string | undefined);
-      if (rootSchema && rootId) {
-        v.addSchema(rootSchema as unknown as Schema, rootId);
-      }
-      const result = v.validate(formData, schema as unknown as Schema);
+      const validator = new Validator(schema as any);
+      const dataToValidate =
+        formData === undefined
+          ? getDefaultFormState(this, schema, formData, rootSchema, true)
+          : formData;
+      const result = validator.validate(dataToValidate);
       return result.valid;
     } catch {
       return false;
     }
   }
 
-  rawValidation<Result = ValidationError>(
+  rawValidation<Result = any>(
     schema: S,
     formData?: T,
   ): { errors?: Result[]; validationError?: Error } {
     try {
-      const v = new Validator();
-      const result = v.validate(formData, schema as unknown as Schema, { nestedErrors: true });
+      const validator = new Validator(schema as any);
+      const result = validator.validate(formData);
       return { errors: result.errors as unknown as Result[] };
     } catch (e) {
       return { validationError: e as Error };
@@ -115,15 +98,18 @@ class EvalFreeValidator<
     transformErrors?: ErrorTransformer<T, S, F>,
     uiSchema?: UiSchema<T, S, F>,
   ): { errors: RJSFValidationError[]; errorSchema: ErrorSchema<T> } {
-    const { errors: rawErrors = [], validationError } = this.rawValidation<ValidationError>(
+    const dataToValidate =
+      formData === undefined ? getDefaultFormState(this, schema, formData, schema, true) : formData;
+
+    const { errors: rawErrors = [], validationError } = this.rawValidation(
       schema,
-      formData,
+      dataToValidate as T,
     );
 
-    let errors = toRJSFValidationErrors(rawErrors as ValidationError[]);
+    let errors = toRJSFValidationErrors(rawErrors);
 
     if (validationError) {
-      errors = [...errors, { stack: validationError.message }];
+      errors = [...errors, { stack: validationError.message } as RJSFValidationError];
     }
 
     if (typeof transformErrors === 'function') {
@@ -135,8 +121,8 @@ class EvalFreeValidator<
     if (validationError) {
       errorSchema = {
         ...errorSchema,
-        $schema: { __errors: [validationError.message] } as ErrorSchema<T>,
-      };
+        $schema: { __errors: [validationError.message] },
+      } as ErrorSchema<T>;
     }
 
     if (typeof customValidate !== 'function') {

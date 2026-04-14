@@ -22,7 +22,6 @@ import type { ModalProps } from 'react-bootstrap';
 // TODO: use @rjsf/react-bootstrap when @rjsf publishes v6 with support for
 // Bootstrap 5: https://github.com/rjsf-team/react-jsonschema-form/issues/4162
 import JsonSchemaForm from '@astarte-platform/react-bootstrap';
-// import validator from '@rjsf/validator-ajv8';
 import evalFreeValidator from './EvalFreeValidator';
 import type { IChangeEvent } from '@rjsf/core';
 import type { WidgetProps } from '@rjsf/utils';
