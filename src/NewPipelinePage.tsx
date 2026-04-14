@@ -19,7 +19,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Form, Spinner, Stack } from 'react-bootstrap';
-import { Validator as JsonSchemaValidator } from 'jsonschema';
+import Ajv from 'ajv';
 import { AstartePipeline } from 'astarte-client';
 import type { AstarteBlock } from 'astarte-client';
 import _ from 'lodash';
@@ -30,6 +30,8 @@ import FormModal from './components/modals/Form';
 import VisualFlowEditor, { getNewModel, nodeModelToSource } from './components/VisualFlowEditor';
 import type NativeBlockModel from './models/NativeBlockModel';
 import SingleCardPage from './ui/SingleCardPage';
+
+const ajv = new Ajv();
 
 interface CommandRowProps {
   className?: string;
@@ -131,7 +133,7 @@ const NewPipelinePage = (): React.ReactElement => {
       return false;
     }
     try {
-      new JsonSchemaValidator().validate({}, schemaObject);
+      ajv.compile(schemaObject);
       return true;
     } catch (e) {
       return false;
